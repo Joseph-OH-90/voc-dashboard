@@ -217,12 +217,23 @@ tbody tr:hover td{background:rgba(37,99,235,.03);color:var(--text-1)}
       <strong>📌 사전 준비 (최초 1회)</strong><br>
       1. <a href="https://console.cloud.google.com" target="_blank">Google Cloud Console</a>에서 프로젝트 생성<br>
       2. <strong>Google Sheets API</strong> 활성화<br>
-      3. 사용자 인증 정보 → <strong>OAuth 2.0 클라이언트 ID</strong> (웹 애플리케이션) 생성<br>
-      4. 승인된 JS 출처에 이 HTML 파일이 열리는 URL 추가<br>
-      5. <strong>Client ID</strong> 복사 후 아래 입력
+      3. 사용자 인증 정보 → <strong>API 키</strong> 생성 (권장)<br>
+      4. 구글 시트 공유 설정 → <strong>링크가 있는 모든 사용자 (뷰어)</strong>로 변경<br>
+      5. API 키 복사 후 아래 입력
     </div>
 
     <div class="field">
+      <label class="field-label">인증 방식 선택</label>
+      <select class="field-input" id="in-authmode" style="font-family:var(--font-main)" onchange="toggleAuthMode()">
+        <option value="apikey">API Key (권장 · 로그인 불필요)</option>
+        <option value="oauth">OAuth 2.0 (Google 로그인 필요)</option>
+      </select>
+    </div>
+    <div class="field" id="field-apikey">
+      <label class="field-label">Google API Key</label>
+      <input class="field-input" id="in-apikey" placeholder="AIzaSy...">
+    </div>
+    <div class="field" id="field-clientid" style="display:none">
       <label class="field-label">Google OAuth Client ID</label>
       <input class="field-input" id="in-clientid" placeholder="123456789-xxxx.apps.googleusercontent.com">
     </div>
@@ -265,7 +276,7 @@ tbody tr:hover td{background:rgba(37,99,235,.03);color:var(--text-1)}
       </div>
     </details>
 
-    <button class="btn-primary" onclick="connectGoogle()" style="margin-top:20px;">🔑 Google 계정으로 연결하기</button>
+    <button class="btn-primary" onclick="connectSheet()" style="margin-top:20px;">🔗 연결하기</button>
     <button class="btn-demo" onclick="runDemo()">🎭 데모 데이터로 미리보기</button>
   </div>
 </div>
@@ -615,26 +626,31 @@ function doLogin() {
 function enterDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   updateAdminUI();
-  // 뷰어는 연결 설정 모달을 보여주지 않고, 저장된 설정이 있으면 바로 연결 시도
+  // 뷰어는 연결 설정 모달을 보여주지 않고, 저장된 설정이 있으면 바로 데이터 로드
   if (!isAdmin) {
     const saved = localStorage.getItem('voc-dash-cfg');
     if (saved) {
       document.getElementById('modal-backdrop').style.display = 'none';
-      // 저장된 설정 복원 후 자동 연결
       try {
         const c = JSON.parse(saved);
-        ['clientid','sheetid','sheetname','col-date','col-type','col-subtype','col-detailtype','col-status','completed'].forEach(k => {
-          const el = document.getElementById('in-' + k);
+        ['authmode','apikey','clientid','sheetid','sheetname','col-date','col-type','col-subtype','col-detailtype','col-status','completed'].forEach(k => {
+          const el = document.getElementById('in-' + (k === 'authmode' ? 'authmode' : k === 'apikey' ? 'apikey' : k));
           if (el && c[k]) el.value = c[k];
         });
       } catch(e) {}
       const cfg = readCfg();
-      if (cfg.clientId && cfg.sheetId) {
-        G.cfg = cfg;
+      G.cfg = cfg;
+      if (cfg.authMode === 'apikey' && cfg.apiKey && cfg.sheetId) {
+        // API Key 방식: 로그인 없이 바로 데이터 로드
+        fetchData().then(() => {
+          setInterval(doRefresh, 5 * 60 * 1000);
+        }).catch(err => toast('데이터 로드 실패: ' + err.message));
+      } else if (cfg.authMode === 'oauth' && cfg.clientId && cfg.sheetId) {
         connectGoogle();
+      } else {
+        toast('관리자가 먼저 대시보드를 연결해야 합니다.');
       }
     } else {
-      // 저장된 설정이 없으면 안내 메시지
       document.getElementById('modal-backdrop').style.display = 'none';
       toast('관리자가 먼저 대시보드를 연결해야 합니다. 관리자 비밀번호로 로그인하세요.');
     }
@@ -668,10 +684,18 @@ let G = {
 };
 
 /* ══════ CONFIG ══════ */
+function toggleAuthMode() {
+  const mode = document.getElementById('in-authmode').value;
+  document.getElementById('field-apikey').style.display = mode === 'apikey' ? '' : 'none';
+  document.getElementById('field-clientid').style.display = mode === 'oauth' ? '' : 'none';
+}
+
 function readCfg() {
   const raw = document.getElementById('in-sheetid').value.trim();
   const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
   return {
+    authMode   : document.getElementById('in-authmode').value || 'apikey',
+    apiKey     : document.getElementById('in-apikey').value.trim(),
     clientId   : document.getElementById('in-clientid').value.trim(),
     sheetId    : m ? m[1] : raw,
     sheetName  : document.getElementById('in-sheetname').value.trim() || '시트1',
@@ -688,12 +712,29 @@ function readCfg() {
 function saveCfgToStorage(cfg) {
   try {
     localStorage.setItem('voc-dash-cfg', JSON.stringify({
+      authmode: cfg.authMode, apikey: cfg.apiKey,
       clientid: cfg.clientId, sheetid: cfg.sheetId, sheetname: cfg.sheetName,
       'col-date': cfg.colDate, 'col-type': cfg.colType, 'col-subtype': cfg.colSubType,
       'col-detailtype': cfg.colDetailType, 'col-status': cfg.colStatus,
       completed: cfg.completed.join(','),
     }));
   } catch(e) {}
+}
+
+function connectSheet() {
+  const cfg = readCfg();
+  if (!cfg.sheetId) return toast('스프레드시트 URL 또는 ID를 입력하세요.');
+  if (cfg.authMode === 'apikey') {
+    if (!cfg.apiKey) return toast('API Key를 입력하세요.');
+    G.cfg = cfg;
+    saveCfgToStorage(cfg);
+    document.getElementById('modal-backdrop').style.display = 'none';
+    fetchData().then(() => {
+      setInterval(doRefresh, 5 * 60 * 1000);
+    }).catch(err => toast('데이터 로드 실패: ' + err.message));
+  } else {
+    connectGoogle();
+  }
 }
 
 function connectGoogle() {
@@ -710,29 +751,16 @@ function connectGoogle() {
       client_id: cfg.clientId,
       scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
       callback: (resp) => {
-        console.log('[VOC] OAuth callback fired', resp);
-        if (resp.error) {
-          console.error('[VOC] OAuth error:', resp.error, resp.error_description);
-          return toast('인증 오류: ' + resp.error + (resp.error_description ? ' — ' + resp.error_description : ''));
-        }
+        if (resp.error) return toast('인증 오류: ' + resp.error);
         G.token = resp.access_token;
-        console.log('[VOC] Token received, length:', G.token.length);
-        console.log('[VOC] G.cfg:', JSON.stringify(G.cfg));
         document.getElementById('modal-backdrop').style.display = 'none';
-        console.log('[VOC] Modal hidden, calling fetchData...');
         fetchData().then(() => {
-          console.log('[VOC] fetchData completed successfully');
           setInterval(doRefresh, 5 * 60 * 1000);
-        }).catch(err => {
-          console.error('[VOC] fetchData FAILED:', err);
-          toast('데이터 로드 실패: ' + err.message);
-        });
+        }).catch(err => toast('데이터 로드 실패: ' + err.message));
       },
     });
-    console.log('[VOC] Requesting access token...');
     client.requestAccessToken();
   } catch(e) {
-    console.error('[VOC] initTokenClient error:', e);
     toast('Google 라이브러리 오류: ' + e.message);
   }
 }
@@ -741,16 +769,17 @@ async function fetchData() {
   loading(true, 'Google Sheets에서 데이터 불러오는 중...');
   try {
     const range = encodeURIComponent(G.cfg.sheetName);
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${G.cfg.sheetId}/values/${range}`;
-    console.log('[VOC] Fetching:', url);
-    const resp = await fetch(url, { headers: { Authorization: `Bearer ${G.token}` } });
-    console.log('[VOC] Response status:', resp.status);
+    let url = `https://sheets.googleapis.com/v4/spreadsheets/${G.cfg.sheetId}/values/${range}`;
+    let headers = {};
+    if (G.cfg.authMode === 'apikey' && G.cfg.apiKey) {
+      url += `?key=${encodeURIComponent(G.cfg.apiKey)}`;
+    } else if (G.token) {
+      headers = { Authorization: `Bearer ${G.token}` };
+    }
+    const resp = await fetch(url, { headers });
     const json = await resp.json();
-    console.log('[VOC] Response JSON:', JSON.stringify(json).substring(0, 500));
     if (json.error) throw new Error(json.error.message);
-    console.log('[VOC] Rows received:', (json.values || []).length);
     parseRows(json.values || []);
-    console.log('[VOC] Parsed data count:', G.data.length);
     renderAll();
     set('last-ts', '업데이트 ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}));
   } catch(e) { console.error('[VOC] fetchData error:', e); toast('오류: ' + e.message); }
@@ -1239,7 +1268,7 @@ function runDemo() {
 function loading(show,msg){const el=document.getElementById('loading');el.style.display=show?'flex':'none';if(msg)set('loading-text',msg);}
 function toast(msg){const el=document.getElementById('toast');el.textContent='⚠ '+msg;el.style.display='block';clearTimeout(el._t);el._t=setTimeout(()=>{el.style.display='none';},5000);}
 function showSetup(){document.getElementById('modal-backdrop').style.display='flex';}
-async function doRefresh(){if(G.token)await fetchData();}
+async function doRefresh(){if(G.token||(G.cfg.authMode==='apikey'&&G.cfg.apiKey))await fetchData();}
 
 /* 그래프 설정 */
 function showChartSettings(){
@@ -1272,7 +1301,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(c['col-date']==='접수일'||c['col-type']==='유형'||c['col-status']==='상태'){
       localStorage.removeItem('voc-dash-cfg'); return;
     }
-    ['clientid','sheetid','sheetname','col-date','col-type','col-subtype','col-detailtype','col-status','completed'].forEach(k=>{const el=document.getElementById('in-'+k);if(el&&c[k])el.value=c[k];});
+    ['authmode','apikey','clientid','sheetid','sheetname','col-date','col-type','col-subtype','col-detailtype','col-status','completed'].forEach(k=>{const el=document.getElementById('in-'+k);if(el&&c[k])el.value=c[k];});
+    toggleAuthMode();
   }catch(e){}
 });
 </script>
