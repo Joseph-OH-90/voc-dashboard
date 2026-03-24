@@ -239,7 +239,7 @@ tbody tr:hover td{background:rgba(37,99,235,.03);color:var(--text-1)}
     </div>
     <div class="field">
       <label class="field-label">Google Sheets URL 또는 스프레드시트 ID</label>
-      <input class="field-input" id="in-sheetid" placeholder="https://docs.google.com/spreadsheets/d/XXXXXXXX/edit">
+      <input class="field-input" id="in-sheetid" value="https://docs.google.com/spreadsheets/d/1yVuiwS1kg_L4IssUejEpmrFgDCofn3ST5J9mK5U81xg/edit?usp=sharing" readonly style="background:#e9ecef;cursor:not-allowed">
     </div>
     <div class="field">
       <label class="field-label">시트 이름 (탭 이름)</label>
@@ -1301,7 +1301,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(c['col-date']==='접수일'||c['col-type']==='유형'||c['col-status']==='상태'){
       localStorage.removeItem('voc-dash-cfg'); return;
     }
-    ['authmode','apikey','clientid','sheetid','sheetname','col-date','col-type','col-subtype','col-detailtype','col-status','completed'].forEach(k=>{const el=document.getElementById('in-'+k);if(el&&c[k])el.value=c[k];});
+    ['authmode','apikey','clientid','sheetid','sheetname','col-date','col-type','col-subtype','col-detailtype','col-status','completed'].forEach(k=>{const el=document.getElementById('in-'+k);if(el&&c[k]&&!el.readOnly)el.value=c[k];});
     toggleAuthMode();
   }catch(e){}
 });
